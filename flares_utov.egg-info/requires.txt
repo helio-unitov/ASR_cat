@@ -1,7 +1,0 @@
-pandas
-numpy
-numba
-scipy
-matplotlib
-tqdm
-typing
