@@ -1,0 +1,8 @@
+pandas
+numpy
+astropy
+scipy
+sunpy
+matplotlib
+tqdm
+typing
