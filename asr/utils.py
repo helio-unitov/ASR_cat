@@ -4,6 +4,7 @@ from sunpy.net import Fido, attrs as a
 from sunpy.timeseries import TimeSeries as ts
 from IPython.display import clear_output
 import pandas as pd
+import matplotlib.pyplot as plt
 
 def goes_downloader(year: int) -> pd.DataFrame:
     """
@@ -59,10 +60,13 @@ def goes_downloader(year: int) -> pd.DataFrame:
     return df
 
 
-def flare_vis(input_date, v=False):
+def flare_vis(input_date, flarelist, v=False):
 
     input_date = pd.to_datetime(input_date)
-    flarelist = pd.read_json("data/f_2003_2024.json")
+
+    # check if the input date is in the range of the flarelist
+    if input_date < flarelist["tstart"].min() or input_date > flarelist["tend"].max():
+        raise ValueError("Input date out of range")
     # find the event closest to the input date
     flarelist["tstart"] = pd.to_datetime(flarelist["tstart"], format="mixed")
     flarelist["tpeak"] = pd.to_datetime(flarelist["tpeak"], format="mixed")
