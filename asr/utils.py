@@ -2,11 +2,10 @@ from typing import Dict, List
 import numpy as np
 from sunpy.net import Fido, attrs as a
 from sunpy.timeseries import TimeSeries as ts
-from IPython.display import clear_output
 import pandas as pd
 import matplotlib.pyplot as plt
 
-def goes_downloader(year: int) -> pd.DataFrame:
+def goes_downloader(year: int, dpath="data/", v=False) -> pd.DataFrame:
     """
     Downloads GOES satellite data for a given year, processes it, and returns it as a DataFrame.
 
@@ -39,13 +38,11 @@ def goes_downloader(year: int) -> pd.DataFrame:
 
     # Search for the data using Fido
     result = Fido.search(a.Time(tstart, tend), a.Instrument("XRS"), a.Resolution("avg1m"), a.goes.SatelliteNumber(satellite))
-    print(result)
+    if v:
+        print(result)
     
     # Fetch the data files
-    files: List[str] = Fido.fetch(result, path="data/downloads/")
-
-    # Clear the output to keep the notebook clean
-    clear_output()
+    files: List[str] = Fido.fetch(result, path=f"{dpath}downloads/")
 
     # Load the data into a TimeSeries object and convert to DataFrame
     goes_ts = ts(files, concatenate=True)
@@ -57,6 +54,9 @@ def goes_downloader(year: int) -> pd.DataFrame:
     df.reset_index(inplace=True)
     df.rename(columns={"index": "time_tag"}, inplace=True)
 
+    if v:
+        print("\n ############################################# \n ############################################# \n")
+        print(df)
     return df
 
 
