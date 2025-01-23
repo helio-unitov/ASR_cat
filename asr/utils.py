@@ -68,9 +68,9 @@ def flare_vis(input_date, flarelist, v=False):
     if input_date < flarelist["tstart"].min() or input_date > flarelist["tend"].max():
         raise ValueError("Input date out of range")
     # find the event closest to the input date
-    flarelist["tstart"] = pd.to_datetime(flarelist["tstart"], format="mixed")
-    flarelist["tpeak"] = pd.to_datetime(flarelist["tpeak"], format="mixed")
-    flarelist["tend"] = pd.to_datetime(flarelist["tend"], format="mixed")
+    flarelist.loc[:, "tstart"] = pd.to_datetime(flarelist["tstart"], format="mixed")
+    flarelist.loc[:, "tpeak"] = pd.to_datetime(flarelist["tpeak"], format="mixed")
+    flarelist.loc[:, "tend"] = pd.to_datetime(flarelist["tend"], format="mixed")
 
     flarelist_delta = np.abs(flarelist["tstart"] - input_date)
     idx = flarelist_delta.idxmin()

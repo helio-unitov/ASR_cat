@@ -7,7 +7,7 @@ with open(path.join(here, 'README.md'), encoding='utf-8') as f:
 
 setup(
     name='flares-utov',
-    version='0.0.1-alpha',    
+    version='0.0.2-alpha',    
     description='A Python lib for Solar Flares identification and classification',
     long_description=long_description,
     long_description_content_type='text/markdown',
