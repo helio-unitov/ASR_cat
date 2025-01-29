@@ -5,58 +5,106 @@ from sunpy.timeseries import TimeSeries as ts
 import pandas as pd
 import matplotlib.pyplot as plt
 
-def goes_downloader(year: int, dpath="data/", v=False) -> pd.DataFrame:
-    """
-    Downloads GOES satellite data for a given year, processes it, and returns it as a DataFrame.
+def goes_downloader_main(year: int, custom_sat_data: str =None, ignore_quality: bool = False): -> pd.DataFrame
 
-    Args:
-        year (int): The year for which to download the data.
+    secondary_flag = None
 
-    Returns:
-        pd.DataFrame: A DataFrame containing the processed GOES satellite data.
-
-    PSA: This docstring was produced with the aid of AI.
-    """
-
-    # Dictionary mapping satellite numbers to their operational years
-    satellite_years: Dict[str, np.ndarray] = {
-        '08': np.arange(1995, 2003, 1), 
-        '12': np.arange(2003, 2007, 1),
-        '11': np.arange(2007, 2008, 1), 
-        '10': np.arange(2008, 2010, 1),
-        '14': np.arange(2010, 2011, 1), 
-        '15': np.arange(2011, 2017, 1),
-        '16': np.arange(2017, 2025, 1)
-    }
-
-    # Determine the satellite number for the given year
-    satellite: str = [satellite for satellite, years in satellite_years.items() if year in years][0]
-
-    # Define the start and end times for the data query, as we want to download one full year of data this simply starts at the beginning of the year and ends at the end of the year
-    tstart: str = f"{year}-01-01 00:00:00"
-    tend: str = f"{year}-12-31 23:59:59"
-
-    # Search for the data using Fido
-    result = Fido.search(a.Time(tstart, tend), a.Instrument("XRS"), a.Resolution("avg1m"), a.goes.SatelliteNumber(satellite))
-    if v:
-        print(result)
+    if custom_sat_data is not None:
+        satellite_years = pd.read_csv(custom_sat_data)
+        satellite_years['start_datetime'] = pd.to_datetime(satellite_years['start_datetime'])
+        satellite_years = satellite_years[satellite_years['start_datetime'].dt.year == year]
+        satellite_years.reset_index(drop=True, inplace=True)
+        # download the data
+        for i in range(len(satellite_years)):
+            tstart = satellite_years['start_datetime'][i]
+            tend = satellite_years['end_datetime'][i]
+            result_primary = Fido.search(a.Time(tstart, tend), a.Instrument("XRS"), a.Resolution("avg1m"), a.goes.SatelliteNumber(int(satellite_years['primary'][i])))
+            if satellite_years["secondary"][i] != np.nan and not ignore_quality:
+                result_secondary = Fido.search(a.Time(tstart, tend), a.Instrument("XRS"), a.Resolution("avg1m"), a.goes.SatelliteNumber(int(satellite_years['secondary'][i])))
+                secondary_flag = True
+            if not os.path.exists(f"data/downloads/{year}_primary/"):
+                os.makedirs(f"data/downloads/{year}_primary/")
+                if not ignore_quality and secondary_flag:
+                    os.makedirs(f"data/downloads/{year}_secondary/")
+            files_primary = Fido.fetch(result_primary, path=f"data/downloads/{year}_primary")
+            if not ignore_quality and secondary_flag:
+                files_secondary = Fido.fetch(result_secondary, path=f"data/downloads/{year}_secondary")
     
-    # Fetch the data files
-    files: List[str] = Fido.fetch(result, path=f"{dpath}downloads/")
+    else:
+        df = goes_downloader_old(year)
+        return df
 
-    # Load the data into a TimeSeries object and convert to DataFrame
-    goes_ts = ts(files, concatenate=True)
-    df: pd.DataFrame = goes_ts.to_dataframe()
+    clear_output()
 
-    # Drop unnecessary columns and rename others
+    files_primary = [f"data/downloads/{year}_primary/{file}" for file in os.listdir(f"data/downloads/{year}_primary/")]
+    goes_ts_primary = ts.TimeSeries(files_primary, concatenate=True)
+    df_primary = goes_ts_primary.to_dataframe()
+    df_primary.drop(columns=["xrsa", "xrsa_quality"], inplace=True)
+    df_primary.rename(columns={"xrsb":"xl", "xrsb_quality":"xl_quality"}, inplace=True)
+    df_primary.reset_index(inplace=True)
+    df_primary.rename(columns={"index":"time_tag"}, inplace=True)
+    
+    if not ignore_quality and secondary_flag:
+        files_secondary = [f"data/downloads/{year}_secondary/{file}" for file in os.listdir(f"data/downloads/{year}_secondary/")]
+        goes_ts_secondary = ts.TimeSeries(files_secondary, concatenate=True)
+        df_secondary = goes_ts_secondary.to_dataframe()
+        df_secondary.drop(columns=["xrsa", "xrsa_quality"], inplace=True)
+        df_secondary.rename(columns={"xrsb":"xl", "xrsb_quality":"xl_quality"}, inplace=True)
+        df_secondary.reset_index(inplace=True)
+        df_secondary.rename(columns={"index":"time_tag"}, inplace=True)
+
+    if not ignore_quality and secondary_flag:
+
+        src = []
+
+        for i in tqdm(range(len(df_primary)), desc="Checking quality"):
+            # check at the same date and time if the quality of the primary satellite is worse than the secondary satellite, if so, replace the primary satellite data with the secondary satellite data
+            # the same date in the secondary satellite data may not be at the same index as the primary satellite data. 
+            # Therefore, we need to find the index of the secondary satellite data that corresponds to the same date and time as the primary satellite data
+            index = df_secondary[df_secondary['time_tag'] == df_primary['time_tag'][i]].index
+            if len(index) > 0:
+                index = index[0]
+                if df_primary['xl_quality'][i] > df_secondary['xl_quality'][index]:
+                    df_primary.loc[i, 'xl'] = df_secondary['xl'][index]
+                    df_primary.loc[i, 'xl_quality'] = df_secondary['xl_quality'][index]
+                    src.append('secondary')
+                else:
+                    src.append('primary')
+            else:
+                src.append('primary')
+        df_primary.loc[:, 'src'] = src
+        return df_primary
+    else:
+        return df_primary
+
+
+
+def goes_downloader_old(year: int): -> pd.DataFrame
+
+    satellite_years = {'08': np.arange(1995, 2003, 1), '12': np.arange(2003, 2007, 1),
+                        '11': np.arange(2007, 2008, 1), '10': np.arange(2008, 2010, 1),
+                        '14': np.arange(2010, 2011, 1), '15': np.arange(2011, 2017, 1),
+                        '16': np.arange(2017, 2025, 1)}
+
+    satellite = [satellite for satellite, years in satellite_years.items() if year in years][0]
+
+    tstart=f"{year}-01-01 00:00:00"
+    tend=f"{year}-12-31 23:59:59"
+
+    result = Fido.search(a.Time(tstart, tend), a.Instrument("XRS"), a.Resolution("avg1m"), a.goes.SatelliteNumber(satellite))
+    print(result)
+    files = Fido.fetch(result, path="data/downloads/")
+
+    clear_output()
+
+    goes_ts = ts.TimeSeries(files, concatenate=True)
+    df = goes_ts.to_dataframe()
+
     df.drop(columns=["xrsa", "xrsa_quality"], inplace=True)
-    df.rename(columns={"xrsb": "xl", "xrsb_quality": "xl_quality"}, inplace=True)
+    df.rename(columns={"xrsb":"xl", "xrsb_quality":"xl_quality"}, inplace=True)
     df.reset_index(inplace=True)
-    df.rename(columns={"index": "time_tag"}, inplace=True)
-
-    if v:
-        print("\n ############################################# \n ############################################# \n")
-        print(df)
+    # rename the index time_tag
+    df.rename(columns={"index":"time_tag"}, inplace=True)
     return df
 
 
