@@ -4,8 +4,9 @@ from sunpy.net import Fido, attrs as a
 from sunpy.timeseries import TimeSeries as ts
 import pandas as pd
 import matplotlib.pyplot as plt
+from astropy.io import fits
 
-def goes_downloader_main(year: int, custom_sat_data: str =None, ignore_quality: bool = False): -> pd.DataFrame
+def goes_downloader_main(year, custom_sat_data=None, ignore_quality: bool = False):
 
     secondary_flag = None
 
@@ -25,7 +26,8 @@ def goes_downloader_main(year: int, custom_sat_data: str =None, ignore_quality: 
             if not os.path.exists(f"data/downloads/{year}_primary/"):
                 os.makedirs(f"data/downloads/{year}_primary/")
                 if not ignore_quality and secondary_flag:
-                    os.makedirs(f"data/downloads/{year}_secondary/")
+                    if not os.path.exists(f"data/downloads/{year}_secondary/"):
+                        os.makedirs(f"data/downloads/{year}_secondary/")
             files_primary = Fido.fetch(result_primary, path=f"data/downloads/{year}_primary")
             if not ignore_quality and secondary_flag:
                 files_secondary = Fido.fetch(result_secondary, path=f"data/downloads/{year}_secondary")
@@ -35,6 +37,11 @@ def goes_downloader_main(year: int, custom_sat_data: str =None, ignore_quality: 
         return df
 
     clear_output()
+
+    if year < 2002:
+        files_primary = [f"data/downloads/{year}_primary/{file}" for file in os.listdir(f"data/downloads/{year}_primary/")]
+        df = legacy_handler(files_primary)
+        return df
 
     files_primary = [f"data/downloads/{year}_primary/{file}" for file in os.listdir(f"data/downloads/{year}_primary/")]
     goes_ts_primary = ts.TimeSeries(files_primary, concatenate=True)
@@ -79,7 +86,7 @@ def goes_downloader_main(year: int, custom_sat_data: str =None, ignore_quality: 
 
 
 
-def goes_downloader_old(year: int): -> pd.DataFrame
+def goes_downloader_old(year):
 
     satellite_years = {'08': np.arange(1995, 2003, 1), '12': np.arange(2003, 2007, 1),
                         '11': np.arange(2007, 2008, 1), '10': np.arange(2008, 2010, 1),
@@ -107,6 +114,63 @@ def goes_downloader_old(year: int): -> pd.DataFrame
     df.rename(columns={"index":"time_tag"}, inplace=True)
     return df
 
+def legacy_handler(files):
+    file = files[0]
+    data = fits.getdata(file)
+    if len(data.shape) == 2:
+        data_hdr = fits.getheader(file)
+        data = data.T
+        time = pd.date_range(start=data_hdr["DATE-OBS"], periods=data.shape[0], freq='3s')
+
+        data_dict = {"time_tag":time, "xl":np.array(data[:,1]).astype(float)}
+        df = pd.DataFrame(data_dict)
+
+        for file in files[1:]:
+
+            data = fits.getdata(file)
+            data = data.T
+            data_hdr = fits.getheader(file)
+            time = pd.date_range(start=data_hdr["DATE-OBS"], periods=data.shape[0], freq='3s')
+            data_dict = {"time_tag": time, "xl": np.array(data[:,1]).astype(float)}
+            df = pd.concat([df, pd.DataFrame(data_dict)], ignore_index=True)
+
+        # resample the data to 1 minute
+        df.set_index("time_tag", inplace=True)
+        df = df.resample("1T").mean()
+        df.reset_index(inplace=True)
+        df.loc[:, "xl_quality"] = 0
+        df.loc[:, "src"] = "legacy"
+
+    else:
+        data_src = fits.open(files[0])
+        data_hdr = data_src[0].header
+        data = data_src[2].data
+        date = file.split("/")[-1].split(".")[0][4:][:4]+"-"+file.split("/")[-1].split(".")[0][4:][4:6]+"-"+file.split("/")[-1].split(".")[0][4:][6:]
+        time = pd.date_range(start=date+" 00:00:00", end=date+" 23:59:59", freq='3s')
+        data_dict = {"time_tag":time, "xl":np.array(data[0][1][:,1]).astype(float)}
+        df = pd.DataFrame(data_dict)
+
+        for file in files[1:]:
+            data_src = fits.open(file)
+            data = data_src[2].data
+            data_hdr = data_src[0].header
+            date = file.split("/")[-1].split(".")[0][4:][:4]+"-"+file.split("/")[-1].split(".")[0][4:][4:6]+"-"+file.split("/")[-1].split(".")[0][4:][6:]
+            time = pd.date_range(start=date+" 00:00:00", end=date+" 23:59:59", freq='3s')
+            # check if time and np.array(data[0][1][:,1]).astype(float) have the same length, if not, skip the file
+            if len(time) != len(np.array(data[0][1][:,1]).astype(float)):
+                continue
+            data_dict = {"time_tag": time, "xl": np.array(data[0][1][:,1]).astype(float)}
+            df = pd.concat([df, pd.DataFrame(data_dict)], ignore_index=True)
+        
+        # resample the data to 1 minute
+        df.sort_values("time_tag", inplace=True)
+        df.set_index("time_tag", inplace=True)
+        df = df.resample("1T").mean()
+        df.reset_index(inplace=True)
+        df.loc[:, "xl_quality"] = 0
+        df.loc[:, "src"] = "legacy"
+        
+    return df
 
 def flare_vis(input_date, flarelist, v=False):
 
