@@ -20,8 +20,12 @@ def goes_downloader_main(year, custom_sat_data=None, ignore_quality: bool = Fals
             tstart = satellite_years['start_datetime'][i]
             tend = satellite_years['end_datetime'][i]
             result_primary = Fido.search(a.Time(tstart, tend), a.Instrument("XRS"), a.Resolution("avg1m"), a.goes.SatelliteNumber(int(satellite_years['primary'][i])))
-            if satellite_years["secondary"][i] != np.nan and not ignore_quality:
+            if not np.isnan(satellite_years["secondary"][i]) and not ignore_quality:
                 result_secondary = Fido.search(a.Time(tstart, tend), a.Instrument("XRS"), a.Resolution("avg1m"), a.goes.SatelliteNumber(int(satellite_years['secondary'][i])))
+                secondary_flag = True
+            if np.isnan(satellite_years["secondary"][i]):
+                print("No secondary satellite data available, falling back to primary satellite data")
+                result_secondary = Fido.search(a.Time(tstart, tend), a.Instrument("XRS"), a.Resolution("avg1m"), a.goes.SatelliteNumber(int(satellite_years['primary'][i])))
                 secondary_flag = True
             if not os.path.exists(f"data/downloads/{year}_primary/"):
                 os.makedirs(f"data/downloads/{year}_primary/")
@@ -40,11 +44,14 @@ def goes_downloader_main(year, custom_sat_data=None, ignore_quality: bool = Fals
 
     if year < 2002:
         files_primary = [f"data/downloads/{year}_primary/{file}" for file in os.listdir(f"data/downloads/{year}_primary/")]
+        if len(files_primary) == 0:
+            files_secondary = [f"data/downloads/{year}_secondary/{file}" for file in os.listdir(f"data/downloads/{year}_secondary/")]
+            files_primary = files_secondary
         df = legacy_handler(files_primary)
         return df
 
     files_primary = [f"data/downloads/{year}_primary/{file}" for file in os.listdir(f"data/downloads/{year}_primary/")]
-    goes_ts_primary = ts.TimeSeries(files_primary, concatenate=True)
+    goes_ts_primary = ts.TimeSeries(files_primary, concatenate=True, allow_errors=True)
     df_primary = goes_ts_primary.to_dataframe()
     df_primary.drop(columns=["xrsa", "xrsa_quality"], inplace=True)
     df_primary.rename(columns={"xrsb":"xl", "xrsb_quality":"xl_quality"}, inplace=True)
@@ -53,7 +60,7 @@ def goes_downloader_main(year, custom_sat_data=None, ignore_quality: bool = Fals
     
     if not ignore_quality and secondary_flag:
         files_secondary = [f"data/downloads/{year}_secondary/{file}" for file in os.listdir(f"data/downloads/{year}_secondary/")]
-        goes_ts_secondary = ts.TimeSeries(files_secondary, concatenate=True)
+        goes_ts_secondary = ts.TimeSeries(files_secondary, concatenate=True, allow_errors=True)
         df_secondary = goes_ts_secondary.to_dataframe()
         df_secondary.drop(columns=["xrsa", "xrsa_quality"], inplace=True)
         df_secondary.rename(columns={"xrsb":"xl", "xrsb_quality":"xl_quality"}, inplace=True)
@@ -136,7 +143,7 @@ def legacy_handler(files):
 
         # resample the data to 1 minute
         df.set_index("time_tag", inplace=True)
-        df = df.resample("1T").mean()
+        df = df.resample("1min").mean()
         df.reset_index(inplace=True)
         df.loc[:, "xl_quality"] = 0
         df.loc[:, "src"] = "legacy"
@@ -165,7 +172,7 @@ def legacy_handler(files):
         # resample the data to 1 minute
         df.sort_values("time_tag", inplace=True)
         df.set_index("time_tag", inplace=True)
-        df = df.resample("1T").mean()
+        df = df.resample("1min").mean()
         df.reset_index(inplace=True)
         df.loc[:, "xl_quality"] = 0
         df.loc[:, "src"] = "legacy"
