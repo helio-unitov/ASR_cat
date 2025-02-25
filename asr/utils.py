@@ -1,43 +1,65 @@
-from typing import Dict, List
+from typing import Dict, List, Optional, Union
 import numpy as np
 from sunpy.net import Fido, attrs as a
 from sunpy.timeseries import TimeSeries as ts
 import pandas as pd
 import matplotlib.pyplot as plt
 from astropy.io import fits
+import os
+from IPython.display import clear_output
 
-def goes_downloader_main(year, custom_sat_data=None, ignore_quality: bool = False):
+def goes_downloader_main(year: int, custom_sat_data: Optional[str] = None, ignore_quality: bool = False, keep_local: bool = True) -> pd.DataFrame:
+    """
+    Main function to download GOES data for a given year.
 
+    Parameters:
+    year (int): The year for which to download data.
+    custom_sat_data (Optional[str]): Path to custom satellite data CSV file.
+    ignore_quality (bool): Whether to ignore quality flags.
+    keep_local (bool): Whether to keep local data.
+
+    Returns:
+    pd.DataFrame: DataFrame containing the downloaded data.
+    """
     secondary_flag = None
+    swpc_scaling_sats = [8, 9, 10, 11, 12, 13, 14, 15, 16]
+    
+    if year < 2002:
+        print("Legacy data, falling back to old downloader")
+        df = goes_downloader_old(year)
+        print(f"Finished processing data for {year}")
+        return df
 
     if custom_sat_data is not None:
         satellite_years = pd.read_csv(custom_sat_data)
         satellite_years['start_datetime'] = pd.to_datetime(satellite_years['start_datetime'])
         satellite_years = satellite_years[satellite_years['start_datetime'].dt.year == year]
         satellite_years.reset_index(drop=True, inplace=True)
-        # download the data
-        for i in range(len(satellite_years)):
-            tstart = satellite_years['start_datetime'][i]
-            tend = satellite_years['end_datetime'][i]
-            result_primary = Fido.search(a.Time(tstart, tend), a.Instrument("XRS"), a.Resolution("avg1m"), a.goes.SatelliteNumber(int(satellite_years['primary'][i])))
-            if not np.isnan(satellite_years["secondary"][i]) and not ignore_quality:
-                result_secondary = Fido.search(a.Time(tstart, tend), a.Instrument("XRS"), a.Resolution("avg1m"), a.goes.SatelliteNumber(int(satellite_years['secondary'][i])))
-                secondary_flag = True
-            if np.isnan(satellite_years["secondary"][i]):
-                print("No secondary satellite data available, falling back to primary satellite data")
-                result_secondary = Fido.search(a.Time(tstart, tend), a.Instrument("XRS"), a.Resolution("avg1m"), a.goes.SatelliteNumber(int(satellite_years['primary'][i])))
-                secondary_flag = True
-            if not os.path.exists(f"data/downloads/{year}_primary/"):
-                os.makedirs(f"data/downloads/{year}_primary/")
+
+        if not keep_local:
+            # Download the data
+            for i in range(len(satellite_years)):
+                tstart = satellite_years['start_datetime'][i]
+                tend = satellite_years['end_datetime'][i]
+                result_primary = Fido.search(a.Time(tstart, tend), a.Instrument("XRS"), a.Resolution("avg1m"), a.goes.SatelliteNumber(int(satellite_years['primary'][i])))
+                if not np.isnan(satellite_years["secondary"][i]) and not ignore_quality:
+                    result_secondary = Fido.search(a.Time(tstart, tend), a.Instrument("XRS"), a.Resolution("avg1m"), a.goes.SatelliteNumber(int(satellite_years['secondary'][i])))
+                    secondary_flag = True
+                if np.isnan(satellite_years["secondary"][i]):
+                    print("No secondary satellite data available, falling back to primary satellite data")
+                    result_secondary = Fido.search(a.Time(tstart, tend), a.Instrument("XRS"), a.Resolution("avg1m"), a.goes.SatelliteNumber(int(satellite_years['primary'][i])))
+                    secondary_flag = True
+                if not os.path.exists(f"data/downloads/{year}_primary/"):
+                    os.makedirs(f"data/downloads/{year}_primary/")
+                    if not ignore_quality and secondary_flag:
+                        if not os.path.exists(f"data/downloads/{year}_secondary/"):
+                            os.makedirs(f"data/downloads/{year}_secondary/")
+                files_primary = Fido.fetch(result_primary, path=f"data/downloads/{year}_primary")
                 if not ignore_quality and secondary_flag:
-                    if not os.path.exists(f"data/downloads/{year}_secondary/"):
-                        os.makedirs(f"data/downloads/{year}_secondary/")
-            files_primary = Fido.fetch(result_primary, path=f"data/downloads/{year}_primary")
-            if not ignore_quality and secondary_flag:
-                files_secondary = Fido.fetch(result_secondary, path=f"data/downloads/{year}_secondary")
-    
+                    files_secondary = Fido.fetch(result_secondary, path=f"data/downloads/{year}_secondary")
     else:
         df = goes_downloader_old(year)
+        print(f"Finished processing data for {year}")
         return df
 
     clear_output()
@@ -48,57 +70,84 @@ def goes_downloader_main(year, custom_sat_data=None, ignore_quality: bool = Fals
             files_secondary = [f"data/downloads/{year}_secondary/{file}" for file in os.listdir(f"data/downloads/{year}_secondary/")]
             files_primary = files_secondary
         df = legacy_handler(files_primary)
+        print(f"Finished processing data for {year}")
         return df
 
-    files_primary = [f"data/downloads/{year}_primary/{file}" for file in os.listdir(f"data/downloads/{year}_primary/")]
-    goes_ts_primary = ts.TimeSeries(files_primary, concatenate=True, allow_errors=True)
-    df_primary = goes_ts_primary.to_dataframe()
-    df_primary.drop(columns=["xrsa", "xrsa_quality"], inplace=True)
-    df_primary.rename(columns={"xrsb":"xl", "xrsb_quality":"xl_quality"}, inplace=True)
-    df_primary.reset_index(inplace=True)
-    df_primary.rename(columns={"index":"time_tag"}, inplace=True)
+    try:
+        files_primary = [f"data/downloads/{year}_primary/{file}" for file in os.listdir(f"data/downloads/{year}_primary/")]
+        goes_ts_primary = ts.TimeSeries(files_primary, concatenate=True, allow_errors=True)
+        df_primary = goes_ts_primary.to_dataframe()
+        df_primary.drop(columns=["xrsa", "xrsa_quality"], inplace=True)
+        df_primary.rename(columns={"xrsb":"xl", "xrsb_quality":"xl_quality"}, inplace=True)
+        df_primary.reset_index(inplace=True)
+        df_primary.rename(columns={"index":"time_tag"}, inplace=True)
+    except IndexError:
+        print("Index error in primary satellite data, falling back to secondary satellite data")
+        try:
+            files_primary = [f"data/downloads/{year}_secondary/{file}" for file in os.listdir(f"data/downloads/{year}_secondary/")]
+            goes_ts_primary = ts.TimeSeries(files_primary, concatenate=True, allow_errors=True)
+            df_primary = goes_ts_primary.to_dataframe()
+            df_primary.drop(columns=["xrsa", "xrsa_quality"], inplace=True)
+            df_primary.rename(columns={"xrsb":"xl", "xrsb_quality":"xl_quality"}, inplace=True)
+            df_primary.reset_index(inplace=True)
+            df_primary.rename(columns={"index":"time_tag"}, inplace=True)
+            secondary_flag = False
+        except IndexError:
+            print("Index error in secondary satellite data, falling back to old data")
+            df_primary = goes_downloader_old(year)
     
     if not ignore_quality and secondary_flag:
-        files_secondary = [f"data/downloads/{year}_secondary/{file}" for file in os.listdir(f"data/downloads/{year}_secondary/")]
-        goes_ts_secondary = ts.TimeSeries(files_secondary, concatenate=True, allow_errors=True)
-        df_secondary = goes_ts_secondary.to_dataframe()
-        df_secondary.drop(columns=["xrsa", "xrsa_quality"], inplace=True)
-        df_secondary.rename(columns={"xrsb":"xl", "xrsb_quality":"xl_quality"}, inplace=True)
-        df_secondary.reset_index(inplace=True)
-        df_secondary.rename(columns={"index":"time_tag"}, inplace=True)
+        try:
+            files_secondary = [f"data/downloads/{year}_secondary/{file}" for file in os.listdir(f"data/downloads/{year}_secondary/")]
+            goes_ts_secondary = ts.TimeSeries(files_secondary, concatenate=True, allow_errors=True)
+            df_secondary = goes_ts_secondary.to_dataframe()
+            df_secondary.drop(columns=["xrsa", "xrsa_quality"], inplace=True)
+            df_secondary.rename(columns={"xrsb":"xl", "xrsb_quality":"xl_quality"}, inplace=True)
+            df_secondary.reset_index(inplace=True)
+            df_secondary.rename(columns={"index":"time_tag"}, inplace=True)
+        except IndexError:
+            print("Index error in secondary satellite data, falling back to primary satellite data")
+            secondary_flag = False
+            pass
 
     if not ignore_quality and secondary_flag:
+        df_secondary.set_index('time_tag', inplace=True)
+        df_primary.set_index('time_tag', inplace=True)
+        df_combined = df_primary.join(df_secondary, lsuffix='_primary', rsuffix='_secondary', how='left')
+        
+        df_combined['xl'] = np.where(df_combined['xl_quality_primary'] > df_combined['xl_quality_secondary'], 
+                         df_combined['xl_secondary'], df_combined['xl_primary'])
+        df_combined['xl_quality'] = np.where(df_combined['xl_quality_primary'] > df_combined['xl_quality_secondary'], 
+                             df_combined['xl_quality_secondary'], df_combined['xl_quality_primary'])
+        df_combined['src'] = np.where(df_combined['xl_quality_primary'] > df_combined['xl_quality_secondary'], 
+                          'secondary', 'primary')
+        
+        df_combined.reset_index(inplace=True)
+        df_primary = df_combined[['time_tag', 'xl', 'xl_quality', 'src']]
 
-        src = []
-
-        for i in tqdm(range(len(df_primary)), desc="Checking quality"):
-            # check at the same date and time if the quality of the primary satellite is worse than the secondary satellite, if so, replace the primary satellite data with the secondary satellite data
-            # the same date in the secondary satellite data may not be at the same index as the primary satellite data. 
-            # Therefore, we need to find the index of the secondary satellite data that corresponds to the same date and time as the primary satellite data
-            index = df_secondary[df_secondary['time_tag'] == df_primary['time_tag'][i]].index
-            if len(index) > 0:
-                index = index[0]
-                if df_primary['xl_quality'][i] > df_secondary['xl_quality'][index]:
-                    df_primary.loc[i, 'xl'] = df_secondary['xl'][index]
-                    df_primary.loc[i, 'xl_quality'] = df_secondary['xl_quality'][index]
-                    src.append('secondary')
-                else:
-                    src.append('primary')
-            else:
-                src.append('primary')
-        df_primary.loc[:, 'src'] = src
+        print(f"Finished processing data for {year}")
         return df_primary
     else:
+        df_primary.loc[:, "src"] = "primary"
+        print(f"Finished processing data for {year}")
         return df_primary
 
+def goes_downloader_old(year: int) -> pd.DataFrame:
+    """
+    Function to download legacy GOES data for a given year.
 
+    Parameters:
+    year (int): The year for which to download data.
 
-def goes_downloader_old(year):
-
+    Returns:
+    pd.DataFrame: DataFrame containing the downloaded data.
+    """
     satellite_years = {'08': np.arange(1995, 2003, 1), '12': np.arange(2003, 2007, 1),
                         '11': np.arange(2007, 2008, 1), '10': np.arange(2008, 2010, 1),
                         '14': np.arange(2010, 2011, 1), '15': np.arange(2011, 2017, 1),
                         '16': np.arange(2017, 2025, 1)}
+    
+    swpc_scaling_sats = [8, 9, 10, 11, 12, 13, 14, 15, 16]
 
     satellite = [satellite for satellite, years in satellite_years.items() if year in years][0]
 
@@ -117,15 +166,26 @@ def goes_downloader_old(year):
     df.drop(columns=["xrsa", "xrsa_quality"], inplace=True)
     df.rename(columns={"xrsb":"xl", "xrsb_quality":"xl_quality"}, inplace=True)
     df.reset_index(inplace=True)
-    # rename the index time_tag
     df.rename(columns={"index":"time_tag"}, inplace=True)
+    df.loc[:, "src"] = "primary"
     return df
 
-def legacy_handler(files):
+def legacy_handler(files: List[str]) -> pd.DataFrame:
+    """
+    Function to handle legacy GOES data files.
+
+    Parameters:
+    files (List[str]): List of file paths.
+
+    Returns:
+    pd.DataFrame: DataFrame containing the processed data.
+    """
+    swpc_scaling_sats = [8, 9, 10, 11, 12, 13, 14, 15]
+
     file = files[0]
     data = fits.getdata(file)
     if len(data.shape) == 2:
-        data_hdr = fits.getheader(file)
+        data_hdr = fits.getheader(file, ignore_missing_simple=True)
         data = data.T
         time = pd.date_range(start=data_hdr["DATE-OBS"], periods=data.shape[0], freq='3s')
 
@@ -133,23 +193,21 @@ def legacy_handler(files):
         df = pd.DataFrame(data_dict)
 
         for file in files[1:]:
-
-            data = fits.getdata(file)
+            data = fits.getdata(file, ignore_missing_simple=True)
             data = data.T
             data_hdr = fits.getheader(file)
             time = pd.date_range(start=data_hdr["DATE-OBS"], periods=data.shape[0], freq='3s')
             data_dict = {"time_tag": time, "xl": np.array(data[:,1]).astype(float)}
             df = pd.concat([df, pd.DataFrame(data_dict)], ignore_index=True)
 
-        # resample the data to 1 minute
+        # Resample the data to 1 minute
         df.set_index("time_tag", inplace=True)
         df = df.resample("1min").mean()
         df.reset_index(inplace=True)
         df.loc[:, "xl_quality"] = 0
         df.loc[:, "src"] = "legacy"
-
     else:
-        data_src = fits.open(files[0])
+        data_src = fits.open(files[0], ignore_missing_simple=True)
         data_hdr = data_src[0].header
         data = data_src[2].data
         date = file.split("/")[-1].split(".")[0][4:][:4]+"-"+file.split("/")[-1].split(".")[0][4:][4:6]+"-"+file.split("/")[-1].split(".")[0][4:][6:]
@@ -158,18 +216,17 @@ def legacy_handler(files):
         df = pd.DataFrame(data_dict)
 
         for file in files[1:]:
-            data_src = fits.open(file)
+            data_src = fits.open(file, ignore_missing_simple=True)
             data = data_src[2].data
             data_hdr = data_src[0].header
             date = file.split("/")[-1].split(".")[0][4:][:4]+"-"+file.split("/")[-1].split(".")[0][4:][4:6]+"-"+file.split("/")[-1].split(".")[0][4:][6:]
             time = pd.date_range(start=date+" 00:00:00", end=date+" 23:59:59", freq='3s')
-            # check if time and np.array(data[0][1][:,1]).astype(float) have the same length, if not, skip the file
             if len(time) != len(np.array(data[0][1][:,1]).astype(float)):
                 continue
             data_dict = {"time_tag": time, "xl": np.array(data[0][1][:,1]).astype(float)}
             df = pd.concat([df, pd.DataFrame(data_dict)], ignore_index=True)
         
-        # resample the data to 1 minute
+        # Resample the data to 1 minute
         df.sort_values("time_tag", inplace=True)
         df.set_index("time_tag", inplace=True)
         df = df.resample("1min").mean()
@@ -179,14 +236,25 @@ def legacy_handler(files):
         
     return df
 
-def flare_vis(input_date, flarelist, v=False):
+def flare_vis(input_date: Union[str, pd.Timestamp], flarelist: pd.DataFrame, v: bool = False) -> None:
+    """
+    Function to visualize flare events.
 
+    Parameters:
+    input_date (Union[str, pd.Timestamp]): The date to visualize.
+    flarelist (pd.DataFrame): DataFrame containing flare events.
+    v (bool): Verbose flag.
+
+    Returns:
+    None
+    """
     input_date = pd.to_datetime(input_date)
 
-    # check if the input date is in the range of the flarelist
+    # Check if the input date is in the range of the flarelist
     if input_date < flarelist["tstart"].min() or input_date > flarelist["tend"].max():
         raise ValueError("Input date out of range")
-    # find the event closest to the input date
+    
+    # Find the event closest to the input date
     flarelist.loc[:, "tstart"] = pd.to_datetime(flarelist["tstart"], format="mixed")
     flarelist.loc[:, "tpeak"] = pd.to_datetime(flarelist["tpeak"], format="mixed")
     flarelist.loc[:, "tend"] = pd.to_datetime(flarelist["tend"], format="mixed")
@@ -197,7 +265,7 @@ def flare_vis(input_date, flarelist, v=False):
     if v:
         print(event)
 
-    # group by events with the same flare_id
+    # Group by events with the same flare_id
     grouped = flarelist.groupby("flare_id")
     flare_id = event["flare_id"]
     group = grouped.get_group(flare_id)
@@ -227,7 +295,6 @@ def flare_vis(input_date, flarelist, v=False):
 
     if len(group) > 1:
         plt.title(f"Flare {flare_id} // Class: {event['fclass_full']} // {len(group)} events")
-        # write in plt.text the class of the other events and the requested one only in bold
         plt.text(0.05, 0.9, "All events: \n" + ", ".join(group["fclass_full"].values), ha='left', transform=plt.gca().transAxes)
         plt.text(0.05, 0.8, "Earliest event: \n" + group["tstart"].min().strftime("%Y-%m-%d %H:%M:%S"), ha='left', transform=plt.gca().transAxes)
     else:

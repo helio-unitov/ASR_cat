@@ -42,6 +42,29 @@ def minmax_df(df: pd.DataFrame) -> pd.DataFrame:
     return df_idx
 
 
+def sanitize_minmax_df(df_idx: pd.DataFrame) -> pd.DataFrame:
+    """
+    Sanitize the dataframe by removing consecutive min-max pairs that are too close to each other.
+
+    Parameters:
+    df_idx (pd.DataFrame): Dataframe with columns 'idx' and 'type' indicating the indices and types of extrema.
+
+    Returns:
+    pd.DataFrame: Sanitized dataframe with consecutive min-max pairs removed.
+
+    PSA: This docstring was produced with the aid of AI.
+    """
+    to_drop = []
+    for i in range(len(df_idx) - 2):
+        # Check if the current index and the index two steps ahead are consecutive
+        if int(df_idx.idx[i]) == int(df_idx.idx[i + 2]) - 2:
+            to_drop.append(i)
+            to_drop.append(i + 1)
+    # Drop the identified rows
+    df_idx.drop(to_drop, inplace=True)
+    df_idx.reset_index(drop=True, inplace=True)
+    return df_idx
+
 def flare_class(delta_flux: float) -> tuple[str, str]:
     """
     Classify a solar flare based on its delta flux.
@@ -90,7 +113,7 @@ def flare_class(delta_flux: float) -> tuple[str, str]:
     
 
 
-def get_fs_atlas(df: pd.DataFrame, df_idx: pd.DataFrame, codename: str, datapath: str, pref_ftype:str="json") -> pd.DataFrame:
+def get_fs_atlas(df: pd.DataFrame, df_idx: pd.DataFrame, codename: str, datapath: str, pref_ftype:str="csv", thr:float=2e-8) -> pd.DataFrame:
     """
     Analyze a dataframe to identify solar flares and save the results to a JSON file.
 
@@ -107,8 +130,8 @@ def get_fs_atlas(df: pd.DataFrame, df_idx: pd.DataFrame, codename: str, datapath
     PSA: This docstring was produced with the aid of AI.
     """
     # Delete pre-existing files
-    if os.path.exists(f"{datapath}f_{codename}.json"):
-        os.remove(f"{datapath}f_{codename}.json")
+    if os.path.exists(f"{datapath}f_{codename}.csv"):
+        os.remove(f"{datapath}f_{codename}.csv")
 
     # Initialize lists to store flare data
     peak_flux = []
@@ -123,6 +146,8 @@ def get_fs_atlas(df: pd.DataFrame, df_idx: pd.DataFrame, codename: str, datapath
     delta_flux = []
     fclass_simple = []
     fclass_full = []
+    abs_class_simple = []
+    abs_class_full = []
     discarded = []
 
     id = 0
@@ -136,7 +161,7 @@ def get_fs_atlas(df: pd.DataFrame, df_idx: pd.DataFrame, codename: str, datapath
             else:
                 min_val = df.xl[h]
 
-            thr = 2e-8
+
             k = df_idx.idx[j + 1]
             max_val = df.xl[k]  # Value of flux at the peak
 
@@ -151,6 +176,8 @@ def get_fs_atlas(df: pd.DataFrame, df_idx: pd.DataFrame, codename: str, datapath
                 delta_flux.append(max_val - min_val)
                 fclass_simple.append(flare_class(max_val - min_val)[0])
                 fclass_full.append(flare_class(max_val - min_val)[1])
+                abs_class_simple.append(flare_class(max_val)[0])
+                abs_class_full.append(flare_class(max_val)[1])
 
                 # Starting from the peak, find the end of the flare by looking for the index where the flux is below the threshold
                 while df.xl[k] > min_val + thr:
@@ -201,13 +228,14 @@ def get_fs_atlas(df: pd.DataFrame, df_idx: pd.DataFrame, codename: str, datapath
         "flux_int_corrected": flux_int_corrected,
         "delta_flux": delta_flux,
         "fclass_simple": fclass_simple,
-        "fclass_full": fclass_full
+        "fclass_full": fclass_full,
+        "abs_class_simple": abs_class_simple,
+        "abs_class_full": abs_class_full,
     })
 
     # Drop flares with NaN values in flux_int or flux_int_corrected
-    old_len = len(flares)
     flares.dropna(subset=["flux_int", "flux_int_corrected"], inplace=True)
-    new_len = len(flares)
+
 
     # Save the dataframe
     if pref_ftype == "csv":
@@ -223,7 +251,7 @@ def get_fs_atlas(df: pd.DataFrame, df_idx: pd.DataFrame, codename: str, datapath
     return flares
 
 
-def process_flares(datapath: str, years: np.ndarray) -> None:
+def process_flares(datapath: str, year: np.ndarray) -> None:
     """
     Process min and max df and GOES flux series for a range of years and save the results to JSON files.
 
@@ -236,14 +264,14 @@ def process_flares(datapath: str, years: np.ndarray) -> None:
 
     PSA: This docstring was produced with the aid of AI.
     """
-    for year in years:
-        start = time.time()
-        df = pd.read_csv(f"{datapath}goes_{year}.json")
-        df = df.infer_objects(copy=False)
-        df = df.reset_index(drop=True)
-        df_idx = minmax_df(df)
-        flares = get_fs_atlas(df, df_idx, str(year), datapath)
-        print(f"Year {year} took {time.time() - start} seconds")
+
+    start = time.time()
+    df = pd.read_csv(f"{datapath}goes_{year}.csv")
+    df = df.reset_index(drop=True)
+    df_idx = minmax_df(df)
+    df_idx = sanitize_minmax_df(df_idx)
+    _= get_fs_atlas(df, df_idx, str(year), datapath)
+    print(f"Year {year} took {(time.time() - start):.2f} seconds")
 
 
 
