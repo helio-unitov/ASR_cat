@@ -113,3 +113,87 @@ def get_flares_location(datapath: str, dpath: str, flarelist: pd.DataFrame, sour
             flarelist["flare_x"] = flare_x
             flarelist["flare_y"] = flare_y
             flarelist.to_csv(datapath + f"flarelist_positions.csv")
+
+
+def coordinate_change(source, start_clean=False):
+
+    if start_clean:
+        lon = np.ones(len(source))*-9999
+        lat = np.ones(len(source))*-9999
+        hgs_lon = np.ones(len(source))*-9999
+        hgs_lat = np.ones(len(source))*-9999
+        start=0
+    elif not start_clean:
+        try:
+            lon = np.load("flare_positions.npy")[0]
+            lat = np.load("flare_positions.npy")[1]
+            hgs_lon = np.load("flare_positions.npy")[2]
+            hgs_lat = np.load("flare_positions.npy")[3]
+            # start should be the last non--9999 value
+            start = np.where(lon==-9999)[0][0]
+        except:
+            lon = np.ones(len(source))*-9999
+            lat = np.ones(len(source))*-9999
+            hgs_lat = np.ones(len(source))*-9999
+            hgs_lon = np.ones(len(source))*-9999
+            start=0
+            print("Error loading previous positions, starting from scratch")
+    
+
+
+    for j in range(start, len(source)):
+        clear_output()
+        print(f"Processing {j+1}/{len(source)}")
+        try:
+            start_time = pd.to_datetime(tstart[j])
+            start_date = datetime(start_time.year, start_time.month, start_time.day, start_time.hour, start_time.minute, 0)
+            end_time = start_time + np.timedelta64(60, 's')
+            end_date = datetime(end_time.year, end_time.month, end_time.day, end_time.hour, end_time.minute, 0)
+            os.system("rm -rf data/results_dir/*")
+            medoc_query(start_date, end_date, wave=171)
+            file = glob.glob("data/results_dir/*.fits")[0]
+            aiamap = sunpy.map.Map(file)
+
+            flare_x = source["flare_x"][j]*u.pixel
+            flare_y = source["flare_y"][j]*u.pixel
+            coord = aiamap.wcs.pixel_to_world(flare_x, flare_y)
+            lon[j] = coord.Tx.value
+            lat[j] = coord.Ty.value
+
+            coord_hgs = coord.transform_to(frames.HeliographicStonyhurst)
+            hgs_lon[j] = coord_hgs.lon.value
+            hgs_lat[j] = coord_hgs.lat.value
+            np.save("flare_positions.npy", [lon, lat, hgs_lon, hgs_lat])
+        except ValueError:
+            print("ValueError")
+            lat[j] = np.nan
+            lon[j] = np.nan
+            hgs_lat[j] = np.nan
+            hgs_lon[j] = np.nan
+            np.save("flare_positions.npy", [lon, lat, hgs_lon, hgs_lat])
+            continue
+        except IndexError:
+            print("IndexError")
+            lat[j] = np.nan
+            lon[j] = np.nan
+            hgs_lat[j] = np.nan
+            hgs_lon[j] = np.nan
+            np.save("flare_positions.npy", [lon, lat, hgs_lon, hgs_lat])
+            continue
+        except:
+            print("Other error")
+            lat[j] = np.nan
+            lon[j] = np.nan
+            hgs_lat[j] = np.nan
+            hgs_lon[j] = np.nan
+            np.save("flare_positions.npy", [lon, lat, hgs_lon, hgs_lat])
+            continue
+
+    source["Lon [Helioprojective]"] = lon
+    source["Lat [Helioprojective]"] = lat
+
+    source["Lon [Heliographic]"] = hgs_lon
+    source["Lat [Heliographic]"] = hgs_lat
+
+    return source
+
