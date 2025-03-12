@@ -9,14 +9,5 @@ If you plan to use the ASR code catalogue in your work please cite the correspon
 
 ### Data Availability
 
-### What is included in the code?
+You can download the catalogue and its code on the Release section of this page.
 
-### Installation instructions for the ASR code
-``
-temp
-``
-
-### Usage
-``
-temp
-``
