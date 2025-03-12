@@ -236,6 +236,43 @@ def legacy_handler(files: List[str]) -> pd.DataFrame:
         
     return df
 
+def saturation_fix(df):
+    df["time_tag"] = pd.to_datetime(df["time_tag"], format="mixed")
+    threshold = 2e-3
+    mask = df["xl"] >= threshold
+    flux = df["xl"].values
+    mask = mask.values
+    mask = mask.astype(float)
+    mask[mask == 0] = np.nan
+    masked_flux = flux * mask
+
+    regions = np.split(masked_flux, np.where(np.diff(mask) != 0)[0]+1)
+    regions = [r for r in regions if r[0] >= threshold]
+    regions = [r for r in regions if len(r) > 1]
+
+    for region in regions:
+        diff = np.diff(region)
+        zero_diff = np.where(np.abs(diff) < 0.0000001)[0]
+        zero_diff = np.append(zero_diff, zero_diff+1)
+        zero_diff = np.append(zero_diff, zero_diff+2)
+        zero_diff = np.unique(zero_diff)
+        if len(zero_diff) > 2:
+            region_sat = region[zero_diff]
+            idx = np.where(np.isin(flux, region_sat))
+            x = np.arange(0, len(region_sat))
+            y = np.copy(region_sat)
+            y[len(y)//2] = np.max(region_sat) +0.5*np.max(region_sat)
+            z = np.polyfit(x, y, 2)
+            p = np.poly1d(z)
+            region_sat = p(x)
+            region[zero_diff] = region_sat
+            flux[idx] = region_sat
+            print("Saturation corrected")
+
+        df["xl"] = flux
+    return df
+
+
 def flare_vis(input_date: Union[str, pd.Timestamp], flarelist: pd.DataFrame, v: bool = False) -> None:
     """
     Function to visualize flare events.
