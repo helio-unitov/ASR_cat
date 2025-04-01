@@ -5,7 +5,7 @@ Despite extensive research, a complete theory explaining both the statistical an
 
 For the most energetic flares since 2010, we provide a method to identify their origin and establish connections to photospheric active regions using data from NASA's Solar Dynamics Observatory. This catalogue serves as a valuable resource for studying space weather and training machine learning models to enhance early warning systems for eruptive solar events.
 
-If you plan to use the ASR code catalogue in your work please cite the corresponding publication: [DOI here]
+If you plan to use the ASR code catalogue in your work please cite the corresponding publication: [Berretti & Mestici et al., 2025](https://www.doi.org/%2010.3847/1538-4365/adc731).
 
 ### Data Availability
 
