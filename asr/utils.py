@@ -7,6 +7,8 @@ import matplotlib.pyplot as plt
 from astropy.io import fits
 import os
 from IPython.display import clear_output
+import glob
+import netCDF4 as nc
 
 def goes_downloader_main(year: int, custom_sat_data: Optional[str] = None, ignore_quality: bool = False, keep_local: bool = True) -> pd.DataFrame:
     """
@@ -22,11 +24,11 @@ def goes_downloader_main(year: int, custom_sat_data: Optional[str] = None, ignor
     pd.DataFrame: DataFrame containing the downloaded data.
     """
     secondary_flag = None
-    swpc_scaling_sats = [8, 9, 10, 11, 12, 13, 14, 15, 16]
     
     if year < 2002:
-        print("Legacy data, falling back to old downloader")
-        df = goes_downloader_old(year)
+        files_primary =  sorted(glob.glob(f"data/downloads/{year}_primary/*.nc"))
+        print(f"Found {files_primary[0]} files for year {year} in primary directory.")
+        df = legacy_handler_MANUAL(files_primary[0])
         print(f"Finished processing data for {year}")
         return df
 
@@ -64,14 +66,6 @@ def goes_downloader_main(year: int, custom_sat_data: Optional[str] = None, ignor
 
     clear_output()
 
-    if year < 2002:
-        files_primary = [f"data/downloads/{year}_primary/{file}" for file in os.listdir(f"data/downloads/{year}_primary/")]
-        if len(files_primary) == 0:
-            files_secondary = [f"data/downloads/{year}_secondary/{file}" for file in os.listdir(f"data/downloads/{year}_secondary/")]
-            files_primary = files_secondary
-        df = legacy_handler(files_primary)
-        print(f"Finished processing data for {year}")
-        return df
 
     try:
         files_primary = [f"data/downloads/{year}_primary/{file}" for file in os.listdir(f"data/downloads/{year}_primary/")]
@@ -147,7 +141,6 @@ def goes_downloader_old(year: int) -> pd.DataFrame:
                         '14': np.arange(2010, 2011, 1), '15': np.arange(2011, 2017, 1),
                         '16': np.arange(2017, 2025, 1)}
     
-    swpc_scaling_sats = [8, 9, 10, 11, 12, 13, 14, 15, 16]
 
     satellite = [satellite for satellite, years in satellite_years.items() if year in years][0]
 
@@ -170,70 +163,27 @@ def goes_downloader_old(year: int) -> pd.DataFrame:
     df.loc[:, "src"] = "primary"
     return df
 
-def legacy_handler(files: List[str]) -> pd.DataFrame:
+def legacy_handler_MANUAL(file: str) -> pd.DataFrame:
     """
-    Function to handle legacy GOES data files.
+    Processes legacy GOES data manually downloaded from the GOES archive.
 
     Parameters:
-    files (List[str]): List of file paths.
+    file (str): Path to the NetCDF file.
 
     Returns:
     pd.DataFrame: DataFrame containing the processed data.
     """
-    swpc_scaling_sats = [8, 9, 10, 11, 12, 13, 14, 15]
+    with nc.Dataset(file) as dataset:
+        data = {var: dataset.variables[var][:] for var in dataset.variables}
+        time_start = dataset.getncattr("time_coverage_start")
+        time_end = dataset.getncattr("time_coverage_end")
+        df = pd.DataFrame(data)
 
-    file = files[0]
-    data = fits.getdata(file)
-    if len(data.shape) == 2:
-        data_hdr = fits.getheader(file, ignore_missing_simple=True)
-        data = data.T
-        time = pd.date_range(start=data_hdr["DATE-OBS"], periods=data.shape[0], freq='3s')
+    df.drop(columns=["xrsa_flux", "xrsa_flags", "xrsa_num", "xrsb_num", "xrsa_flags_excluded", "xrsb_flags_excluded", "time"], inplace=True)
+    df.rename(columns={"xrsb_flux": "xl", "xrsb_flags": "xl_quality"}, inplace=True)
+    df["time_tag"] = pd.date_range(start=time_start, end=time_end, freq="1min", tz="UTC").tz_localize(None)
+    df.loc[:, "src"] = "primary"
 
-        data_dict = {"time_tag":time, "xl":np.array(data[:,1]).astype(float)}
-        df = pd.DataFrame(data_dict)
-
-        for file in files[1:]:
-            data = fits.getdata(file, ignore_missing_simple=True)
-            data = data.T
-            data_hdr = fits.getheader(file)
-            time = pd.date_range(start=data_hdr["DATE-OBS"], periods=data.shape[0], freq='3s')
-            data_dict = {"time_tag": time, "xl": np.array(data[:,1]).astype(float)}
-            df = pd.concat([df, pd.DataFrame(data_dict)], ignore_index=True)
-
-        # Resample the data to 1 minute
-        df.set_index("time_tag", inplace=True)
-        df = df.resample("1min").mean()
-        df.reset_index(inplace=True)
-        df.loc[:, "xl_quality"] = 0
-        df.loc[:, "src"] = "legacy"
-    else:
-        data_src = fits.open(files[0], ignore_missing_simple=True)
-        data_hdr = data_src[0].header
-        data = data_src[2].data
-        date = file.split("/")[-1].split(".")[0][4:][:4]+"-"+file.split("/")[-1].split(".")[0][4:][4:6]+"-"+file.split("/")[-1].split(".")[0][4:][6:]
-        time = pd.date_range(start=date+" 00:00:00", end=date+" 23:59:59", freq='3s')
-        data_dict = {"time_tag":time, "xl":np.array(data[0][1][:,1]).astype(float)}
-        df = pd.DataFrame(data_dict)
-
-        for file in files[1:]:
-            data_src = fits.open(file, ignore_missing_simple=True)
-            data = data_src[2].data
-            data_hdr = data_src[0].header
-            date = file.split("/")[-1].split(".")[0][4:][:4]+"-"+file.split("/")[-1].split(".")[0][4:][4:6]+"-"+file.split("/")[-1].split(".")[0][4:][6:]
-            time = pd.date_range(start=date+" 00:00:00", end=date+" 23:59:59", freq='3s')
-            if len(time) != len(np.array(data[0][1][:,1]).astype(float)):
-                continue
-            data_dict = {"time_tag": time, "xl": np.array(data[0][1][:,1]).astype(float)}
-            df = pd.concat([df, pd.DataFrame(data_dict)], ignore_index=True)
-        
-        # Resample the data to 1 minute
-        df.sort_values("time_tag", inplace=True)
-        df.set_index("time_tag", inplace=True)
-        df = df.resample("1min").mean()
-        df.reset_index(inplace=True)
-        df.loc[:, "xl_quality"] = 0
-        df.loc[:, "src"] = "legacy"
-        
     return df
 
 def saturation_fix(df):
