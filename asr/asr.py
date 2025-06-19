@@ -1,7 +1,7 @@
-import numpy as np
-from scipy.signal import argrelextrema
-from tqdm.autonotebook import tqdm
-import pandas as pd
+import numpy as np # type: ignore
+from scipy.signal import argrelextrema # type: ignore
+from tqdm.autonotebook import tqdm # type: ignore
+import pandas as pd # type: ignore
 import time
 import os
 import gc
@@ -149,6 +149,7 @@ def get_fs_atlas(df: pd.DataFrame, df_idx: pd.DataFrame, codename: str, datapath
     abs_class_simple = []
     abs_class_full = []
     discarded = []
+    peak_end_ratio = []
 
     id = 0
 
@@ -186,11 +187,23 @@ def get_fs_atlas(df: pd.DataFrame, df_idx: pd.DataFrame, codename: str, datapath
                         k -= 1
                         break
 
-                # If the next minimum is before the end of the flare, set the end of the flare to the next minimum
-                if df.time_tag[k] >= df.time_tag[df_idx.idx[j + 2]]:
-                    end = df_idx.idx[j + 2]
-                else:
-                    end = k
+                # Find the end of the flare: 
+                # - If the next minimum is before the flux drops below threshold, use that as end.
+                # - Otherwise, use the first index where flux drops below threshold.
+                next_min_idx = df_idx.idx[j+2]
+                flare_end_idx = k
+                per = df.xl[k] / max_val
+
+                if df.time_tag[k] >= df.time_tag[next_min_idx]:
+                    flare_end_idx = next_min_idx
+                    per = df.xl[flare_end_idx] / max_val
+                elif per >= 0.99:
+                    # If the flux at k is still very close to the peak, keep k as end
+                    flare_end_idx = k
+                    per = df.xl[flare_end_idx] / max_val
+
+                peak_end_ratio.append(per)
+                end = flare_end_idx
                 tend.append(df.time_tag[end])
 
                 # Get the flux integral as the integral of the flux between the start and end times, considering the background flux which is the flux at the start time and needs to be removed at each time step
@@ -225,6 +238,7 @@ def get_fs_atlas(df: pd.DataFrame, df_idx: pd.DataFrame, codename: str, datapath
         "BG_flux": start_flux,
         "flux_int": flux_int,
         "ratio": ratio_arr,
+        "peak_end_ratio": peak_end_ratio,
         "flux_int_corrected": flux_int_corrected,
         "delta_flux": delta_flux,
         "fclass_simple": fclass_simple,
