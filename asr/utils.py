@@ -1,7 +1,7 @@
 from typing import Dict, List, Optional, Union
 import numpy as np
 from sunpy.net import Fido, attrs as a
-from sunpy.timeseries import TimeSeries as ts
+import sunpy.timeseries as ts
 import pandas as pd
 import matplotlib.pyplot as plt
 from astropy.io import fits
