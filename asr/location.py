@@ -11,6 +11,7 @@ import trackpy as tp
 from astropy import units as u
 from sunpy.coordinates import frames
 
+
 sdo = SdoClientMedoc()
 
 def medoc_query(start_date: datetime, peak_date: datetime, end_peak_date: datetime, end_date: datetime, wave: int = 171) -> None:
@@ -38,7 +39,7 @@ def jsoc_query(start_date: np.datetime64, peak_date: np.datetime64, end_peak_dat
         # retry if download failed
         dl = Fido.fetch(dl, path=dpath)
 
-def get_flares_location(datapath: str, dpath: str, flarelist: pd.DataFrame, source: str, start_clean: bool = False) -> None:
+def get_flares_location(datapath: str, dpath: str, flarelist: pd.DataFrame, source: str, start_clean: bool = False, wave: int = 171) -> None:
     """Get the location of flares."""
     flarelist["tstart"] = pd.to_datetime(flarelist["tstart"], format="mixed")
     flarelist = flarelist[flarelist["tstart"] > np.datetime64('2010-05-13')]
@@ -57,8 +58,8 @@ def get_flares_location(datapath: str, dpath: str, flarelist: pd.DataFrame, sour
     last_index = 0
     try:
         print("Loading previous data")
-        flare_x = np.load(datapath + "flare_x.npy")
-        flare_y = np.load(datapath + "flare_y.npy")
+        flare_x = np.load(datapath + f"flare_x_{wave}.npy")
+        flare_y = np.load(datapath + f"flare_y_{wave}.npy")
         last_index = np.where(flare_x == -1)[0][0]
     except FileNotFoundError:
         print("No previous data found")
@@ -78,13 +79,13 @@ def get_flares_location(datapath: str, dpath: str, flarelist: pd.DataFrame, sour
                 peak_date = datetime(peak_time.year, peak_time.month, peak_time.day, peak_time.hour, peak_time.minute, 0)
                 end_peak_time = peak_time + np.timedelta64(60, 's')
                 end_peak_date = datetime(end_peak_time.year, end_peak_time.month, end_peak_time.day, end_peak_time.hour, end_peak_time.minute, 0)
-                medoc_query(start_date, peak_date, end_peak_date, end_date, wave=171)
+                medoc_query(start_date, peak_date, end_peak_date, end_date, wave=wave)
             elif source == "jsoc":
                 start_time = np.datetime64(tstart[j])
                 end_time = start_time + np.timedelta64(10, 's')
                 peak_time = np.datetime64(peak[j])
                 end_peak_time = peak_time + np.timedelta64(10, 's')
-                jsoc_query(start_time, peak_time, end_peak_time, end_time, wave=171)
+                jsoc_query(start_time, peak_time, end_peak_time, end_time, wave=wave)
             else:
                 raise ValueError("Source not recognized")
 
@@ -100,24 +101,24 @@ def get_flares_location(datapath: str, dpath: str, flarelist: pd.DataFrame, sour
             print("Flare number: ", j + 1, " / ", len(flarelist))
             flare_x[j] = x
             flare_y[j] = y
-            np.save(datapath + "flare_x.npy", flare_x)
-            np.save(datapath + "flare_y.npy", flare_y)
-            flarelist["flare_x"] = flare_x
-            flarelist["flare_y"] = flare_y
-            flarelist.to_csv(datapath + f"flarelist_positions.csv")
+            np.save(datapath + f"flare_x_{wave}.npy", flare_x)
+            np.save(datapath + f"flare_y_{wave}.npy", flare_y)
+            flarelist[f"flare_x_{wave}"] = flare_x
+            flarelist[f"flare_y_{wave}"] = flare_y
+            flarelist.to_csv(datapath + f"flarelist_positions_{wave}.csv")
 
         except Exception as e:
             print(f"Error processing flare {j}: {e}")
             flare_x[j] = np.nan
             flare_y[j] = np.nan
-            np.save(datapath + "flare_x.npy", flare_x)
-            np.save(datapath + "flare_y.npy", flare_y)
-            flarelist["flare_x"] = flare_x
-            flarelist["flare_y"] = flare_y
-            flarelist.to_csv(datapath + f"flarelist_positions.csv")
+            np.save(datapath + f"flare_x_{wave}.npy", flare_x)
+            np.save(datapath + f"flare_y_{wave}.npy", flare_y)
+            flarelist[f"flare_x_{wave}"] = flare_x
+            flarelist[f"flare_y_{wave}"] = flare_y
+            flarelist.to_csv(datapath + f"flarelist_positions_{wave}.csv")
 
 
-def coordinate_change(source, start_clean=False):
+def coordinate_change(source, start_clean=False, wave=171):
 
     if start_clean:
         lon = np.ones(len(source))*-9999
@@ -127,10 +128,10 @@ def coordinate_change(source, start_clean=False):
         start=0
     elif not start_clean:
         try:
-            lon = np.load("flare_positions.npy")[0]
-            lat = np.load("flare_positions.npy")[1]
-            hgs_lon = np.load("flare_positions.npy")[2]
-            hgs_lat = np.load("flare_positions.npy")[3]
+            lon = np.load(f"flare_positions_{wave}.npy")[0]
+            lat = np.load(f"flare_positions_{wave}.npy")[1]
+            hgs_lon = np.load(f"flare_positions_{wave}.npy")[2]
+            hgs_lat = np.load(f"flare_positions_{wave}.npy")[3]
             # start should be the last non--9999 value
             start = np.where(lon==-9999)[0][0]
         except:
@@ -153,10 +154,10 @@ def coordinate_change(source, start_clean=False):
             os.system("rm -rf data/results_dir/*")
             medoc_query(start_date, end_date, wave=171)
             file = glob.glob("data/results_dir/*.fits")[0]
-            aiamap = sunpy.map.Map(file)
+            aiamap = Map(file)
 
-            flare_x = source["flare_x"][j]*u.pixel
-            flare_y = source["flare_y"][j]*u.pixel
+            flare_x = source[f"flare_x_{wave}"][j]*u.pixel
+            flare_y = source[f"flare_y_{wave}"][j]*u.pixel
             coord = aiamap.wcs.pixel_to_world(flare_x, flare_y)
             lon[j] = coord.Tx.value
             lat[j] = coord.Ty.value
@@ -164,14 +165,14 @@ def coordinate_change(source, start_clean=False):
             coord_hgs = coord.transform_to(frames.HeliographicStonyhurst)
             hgs_lon[j] = coord_hgs.lon.value
             hgs_lat[j] = coord_hgs.lat.value
-            np.save("flare_positions.npy", [lon, lat, hgs_lon, hgs_lat])
+            np.save(f"flare_positions_{wave}.npy", [lon, lat, hgs_lon, hgs_lat])
         except ValueError:
             print("ValueError")
             lat[j] = np.nan
             lon[j] = np.nan
             hgs_lat[j] = np.nan
             hgs_lon[j] = np.nan
-            np.save("flare_positions.npy", [lon, lat, hgs_lon, hgs_lat])
+            np.save(f"flare_positions_{wave}.npy", [lon, lat, hgs_lon, hgs_lat])
             continue
         except IndexError:
             print("IndexError")
@@ -179,7 +180,7 @@ def coordinate_change(source, start_clean=False):
             lon[j] = np.nan
             hgs_lat[j] = np.nan
             hgs_lon[j] = np.nan
-            np.save("flare_positions.npy", [lon, lat, hgs_lon, hgs_lat])
+            np.save(f"flare_positions_{wave}.npy", [lon, lat, hgs_lon, hgs_lat])
             continue
         except:
             print("Other error")
@@ -187,14 +188,14 @@ def coordinate_change(source, start_clean=False):
             lon[j] = np.nan
             hgs_lat[j] = np.nan
             hgs_lon[j] = np.nan
-            np.save("flare_positions.npy", [lon, lat, hgs_lon, hgs_lat])
+            np.save(f"flare_positions_{wave}.npy", [lon, lat, hgs_lon, hgs_lat])
             continue
 
-    source["Lon [Helioprojective]"] = lon
-    source["Lat [Helioprojective]"] = lat
+    source[f"Lon_{wave} [Helioprojective]"] = lon
+    source[f"Lat_{wave} [Helioprojective]"] = lat
 
-    source["Lon [Heliographic]"] = hgs_lon
-    source["Lat [Heliographic]"] = hgs_lat
+    source[f"Lon_{wave} [Heliographic]"] = hgs_lon
+    source[f"Lat_{wave} [Heliographic]"] = hgs_lat
 
     return source
 
