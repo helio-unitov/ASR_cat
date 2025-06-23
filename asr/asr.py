@@ -113,7 +113,7 @@ def flare_class(delta_flux: float) -> tuple[str, str]:
     
 
 
-def get_fs_atlas(df: pd.DataFrame, df_idx: pd.DataFrame, codename: str, datapath: str, pref_ftype:str="csv", thr:float=2e-8) -> pd.DataFrame:
+def get_fs_atlas(df: pd.DataFrame, df_idx: pd.DataFrame, codename: str, datapath: str, pref_ftype:str="csv", thr:float=2e-8, el_thr:float=0.99) -> pd.DataFrame:
     """
     Analyze a dataframe to identify solar flares and save the results to a JSON file.
 
@@ -197,7 +197,7 @@ def get_fs_atlas(df: pd.DataFrame, df_idx: pd.DataFrame, codename: str, datapath
                 if df.time_tag[k] >= df.time_tag[next_min_idx]:
                     flare_end_idx = next_min_idx
                     per = df.xl[flare_end_idx] / max_val
-                elif per >= 0.99:
+                elif per >= el_thr:
                     # If the flux at k is still very close to the peak, keep k as end
                     flare_end_idx = k
                     per = df.xl[flare_end_idx] / max_val

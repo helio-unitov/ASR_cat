@@ -8,6 +8,8 @@ from sunpy.map import Map
 from sunpy.net import Fido, attrs as a
 from sitools2 import SdoClientMedoc
 import trackpy as tp
+from astropy import units as u
+from sunpy.coordinates import frames
 
 sdo = SdoClientMedoc()
 
@@ -139,10 +141,9 @@ def coordinate_change(source, start_clean=False):
             start=0
             print("Error loading previous positions, starting from scratch")
     
-
+    tstart = np.array(source["tstart"])
 
     for j in range(start, len(source)):
-        clear_output()
         print(f"Processing {j+1}/{len(source)}")
         try:
             start_time = pd.to_datetime(tstart[j])
