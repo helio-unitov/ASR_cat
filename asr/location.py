@@ -3,7 +3,6 @@ import pandas as pd
 import os
 import glob
 from datetime import datetime
-from astropy.io import fits
 from sunpy.map import Map
 from sunpy.net import Fido, attrs as a
 from sitools2 import SdoClientMedoc
@@ -11,21 +10,24 @@ import trackpy as tp
 from astropy import units as u
 from sunpy.coordinates import frames
 
-
 sdo = SdoClientMedoc()
 
-def medoc_query(start_date: datetime, peak_date: datetime, end_peak_date: datetime, end_date: datetime, wave: int = 171) -> None:
+
+def medoc_query(dpath: str, start_date: datetime, peak_date: datetime, end_peak_date: datetime, end_date: datetime,
+                wave: int = 171) -> None:
     """Query MEDOC for SDO data."""
     sdo_data_start = sdo.search(DATES=[start_date, end_date], NB_RES_MAX=1, waves=[wave])
     sdo_data_peak = sdo.search(DATES=[peak_date, end_peak_date], NB_RES_MAX=1, waves=[wave])
     sdo_data_list = sdo_data_start + sdo_data_peak
     for data in sdo_data_list:
-        data.get_file(target_dir="data/results_dir/", segment=['image_lev1'], DECOMPRESS=True)
+        data.get_file(target_dir=dpath, segment=['image_lev1'], DECOMPRESS=True)
 
-def jsoc_query(start_date: np.datetime64, peak_date: np.datetime64, end_peak_date: np.datetime64, end_date: np.datetime64, wave: int = 171, email: str = "michele.berretti@roma2.infn.it", dpath: str = "data/results_dir/") -> None:
+
+def jsoc_query(dpath: str, start_date: np.datetime64, peak_date: np.datetime64, end_peak_date: np.datetime64,
+               end_date: np.datetime64, wave: int = 171, email: str = "jsocsecondmail@yahoo.com") -> None:
     """Query JSOC for AIA data."""
     query_aia = Fido.search(
-        a.Time(start_date, end_date) | 
+        a.Time(start_date, end_date) |
         a.Time(peak_date, end_peak_date),
         a.jsoc.Series.aia_lev1,
         a.jsoc.Notify(email),
@@ -34,35 +36,55 @@ def jsoc_query(start_date: np.datetime64, peak_date: np.datetime64, end_peak_dat
     )
     res = query_aia['jsoc']
     aia_files = [res[0], res[1]]
-    for aia_file in aia_files: 
+    for aia_file in aia_files:
         dl = Fido.fetch(aia_file, path=dpath)
         # retry if download failed
         dl = Fido.fetch(dl, path=dpath)
 
-def get_flares_location(datapath: str, dpath: str, flarelist: pd.DataFrame, source: str, start_clean: bool = False, wave: int = 171) -> None:
-    """Get the location of flares."""
+
+# IMPORTANT: Flarelist handling requirements:
+# 1. First run: Use the generic/original flarelist to establish baseline positions
+# 2. Subsequent runs: For different wavelengths, use the previously generated positions catalogue
+#    to preserve existing wavelength-specific position data
+def flarelist_prep(datapath: str, flarelist: pd.DataFrame, fclass: str = "X") -> None:
     flarelist["tstart"] = pd.to_datetime(flarelist["tstart"], format="mixed")
     flarelist = flarelist[flarelist["tstart"] > np.datetime64('2010-05-13')]
+    flarelist = flarelist[flarelist["fclass_simple"].isin([fclass])]
+    flarelist = flarelist.reset_index(drop=True)
+    flarelist.to_csv(datapath + f"flarelist_positions_" + fclass + ".csv")
+
+
+def get_flares_location(datapath: str, dpath: str, source: str, start_clean: bool = False, wave: int = 171,
+                        fclass: str = "X") -> None:
+    """Get the location of flares."""
+
+    flarelist = pd.read_csv(datapath + f"flarelist_positions_" + fclass + ".csv")
+
     tstart = np.array(flarelist["tstart"])
     peak = np.array(flarelist["tpeak"])
     flare_x = -1 * np.ones(len(flarelist))
     flare_y = -1 * np.ones(len(flarelist))
 
-    if start_clean:
-        try:
-            os.remove(datapath + "flare_x.npy")
-            os.remove(datapath + "flare_y.npy")
-        except FileNotFoundError:
-            pass
-
     last_index = 0
-    try:
-        print("Loading previous data")
-        flare_x = np.load(datapath + f"flare_x_{wave}.npy")
-        flare_y = np.load(datapath + f"flare_y_{wave}.npy")
-        last_index = np.where(flare_x == -1)[0][0]
-    except FileNotFoundError:
-        print("No previous data found")
+
+    if start_clean:
+        print("Starting clean, removing previous flare positions")
+        for fname in [f"flare_x_{wave}.npy", f"flare_y_{wave}.npy"]:
+            try:
+                os.remove(os.path.join(datapath, fname))
+            except FileNotFoundError:
+                continue
+    else:
+        print("Resuming from previous flare positions")
+        try:
+            flare_x = np.load(os.path.join(datapath, f"flare_x_{wave}.npy"))
+            flare_y = np.load(os.path.join(datapath, f"flare_y_{wave}.npy"))
+            last_index = np.argmax(flare_x == -1)
+            if flare_x[last_index] != -1:
+                last_index = len(flare_x)
+        except FileNotFoundError:
+            print("No previous flare positions found, starting from scratch")
+            pass
 
     for j in range(last_index, len(flarelist)):
         try:
@@ -72,20 +94,23 @@ def get_flares_location(datapath: str, dpath: str, flarelist: pd.DataFrame, sour
 
             if source == "medoc":
                 start_time = pd.to_datetime(tstart[j])
-                start_date = datetime(start_time.year, start_time.month, start_time.day, start_time.hour, start_time.minute, 0)
+                start_date = datetime(start_time.year, start_time.month, start_time.day, start_time.hour,
+                                      start_time.minute, 0)
                 end_time = start_time + np.timedelta64(60, 's')
                 end_date = datetime(end_time.year, end_time.month, end_time.day, end_time.hour, end_time.minute, 0)
                 peak_time = pd.to_datetime(peak[j])
-                peak_date = datetime(peak_time.year, peak_time.month, peak_time.day, peak_time.hour, peak_time.minute, 0)
+                peak_date = datetime(peak_time.year, peak_time.month, peak_time.day, peak_time.hour, peak_time.minute,
+                                     0)
                 end_peak_time = peak_time + np.timedelta64(60, 's')
-                end_peak_date = datetime(end_peak_time.year, end_peak_time.month, end_peak_time.day, end_peak_time.hour, end_peak_time.minute, 0)
-                medoc_query(start_date, peak_date, end_peak_date, end_date, wave=wave)
+                end_peak_date = datetime(end_peak_time.year, end_peak_time.month, end_peak_time.day, end_peak_time.hour,
+                                         end_peak_time.minute, 0)
+                medoc_query(dpath, start_date, peak_date, end_peak_date, end_date, wave=wave)
             elif source == "jsoc":
                 start_time = np.datetime64(tstart[j])
                 end_time = start_time + np.timedelta64(10, 's')
                 peak_time = np.datetime64(peak[j])
                 end_peak_time = peak_time + np.timedelta64(10, 's')
-                jsoc_query(start_time, peak_time, end_peak_time, end_time, wave=wave)
+                jsoc_query(dpath, start_time, peak_time, end_peak_time, end_time, wave=wave)
             else:
                 raise ValueError("Source not recognized")
 
@@ -105,7 +130,7 @@ def get_flares_location(datapath: str, dpath: str, flarelist: pd.DataFrame, sour
             np.save(datapath + f"flare_y_{wave}.npy", flare_y)
             flarelist[f"flare_x_{wave}"] = flare_x
             flarelist[f"flare_y_{wave}"] = flare_y
-            flarelist.to_csv(datapath + f"flarelist_positions_{wave}.csv")
+            flarelist.to_csv(datapath + f"flarelist_positions_" + fclass + ".csv")
 
         except Exception as e:
             print(f"Error processing flare {j}: {e}")
@@ -115,17 +140,16 @@ def get_flares_location(datapath: str, dpath: str, flarelist: pd.DataFrame, sour
             np.save(datapath + f"flare_y_{wave}.npy", flare_y)
             flarelist[f"flare_x_{wave}"] = flare_x
             flarelist[f"flare_y_{wave}"] = flare_y
-            flarelist.to_csv(datapath + f"flarelist_positions_{wave}.csv")
+            flarelist.to_csv(datapath + f"flarelist_positions_" + fclass + ".csv")
 
 
 def coordinate_change(source, start_clean=False, wave=171):
-
     if start_clean:
-        lon = np.ones(len(source))*-9999
-        lat = np.ones(len(source))*-9999
-        hgs_lon = np.ones(len(source))*-9999
-        hgs_lat = np.ones(len(source))*-9999
-        start=0
+        lon = np.ones(len(source)) * -9999
+        lat = np.ones(len(source)) * -9999
+        hgs_lon = np.ones(len(source)) * -9999
+        hgs_lat = np.ones(len(source)) * -9999
+        start = 0
     elif not start_clean:
         try:
             lon = np.load(f"flare_positions_{wave}.npy")[0]
@@ -133,22 +157,23 @@ def coordinate_change(source, start_clean=False, wave=171):
             hgs_lon = np.load(f"flare_positions_{wave}.npy")[2]
             hgs_lat = np.load(f"flare_positions_{wave}.npy")[3]
             # start should be the last non--9999 value
-            start = np.where(lon==-9999)[0][0]
+            start = np.where(lon == -9999)[0][0]
         except:
-            lon = np.ones(len(source))*-9999
-            lat = np.ones(len(source))*-9999
-            hgs_lat = np.ones(len(source))*-9999
-            hgs_lon = np.ones(len(source))*-9999
-            start=0
+            lon = np.ones(len(source)) * -9999
+            lat = np.ones(len(source)) * -9999
+            hgs_lat = np.ones(len(source)) * -9999
+            hgs_lon = np.ones(len(source)) * -9999
+            start = 0
             print("Error loading previous positions, starting from scratch")
-    
+
     tstart = np.array(source["tstart"])
 
     for j in range(start, len(source)):
-        print(f"Processing {j+1}/{len(source)}")
+        print(f"Processing {j + 1}/{len(source)}")
         try:
             start_time = pd.to_datetime(tstart[j])
-            start_date = datetime(start_time.year, start_time.month, start_time.day, start_time.hour, start_time.minute, 0)
+            start_date = datetime(start_time.year, start_time.month, start_time.day, start_time.hour, start_time.minute,
+                                  0)
             end_time = start_time + np.timedelta64(60, 's')
             end_date = datetime(end_time.year, end_time.month, end_time.day, end_time.hour, end_time.minute, 0)
             os.system("rm -rf data/results_dir/*")
@@ -156,8 +181,8 @@ def coordinate_change(source, start_clean=False, wave=171):
             file = glob.glob("data/results_dir/*.fits")[0]
             aiamap = Map(file)
 
-            flare_x = source[f"flare_x_{wave}"][j]*u.pixel
-            flare_y = source[f"flare_y_{wave}"][j]*u.pixel
+            flare_x = source[f"flare_x_{wave}"][j] * u.pixel
+            flare_y = source[f"flare_y_{wave}"][j] * u.pixel
             coord = aiamap.wcs.pixel_to_world(flare_x, flare_y)
             lon[j] = coord.Tx.value
             lat[j] = coord.Ty.value
@@ -198,4 +223,3 @@ def coordinate_change(source, start_clean=False, wave=171):
     source[f"Lat_{wave} [Heliographic]"] = hgs_lat
 
     return source
-
