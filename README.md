@@ -9,5 +9,5 @@ If you plan to use the ASR code catalogue in your work please cite the correspon
 
 ### Data Availability
 
-You can download the catalogue and its code on the Release section of this page.
+You can download the catalogue and its code on the [Release](https://github.com/helio-unitov/ASR_cat/releases) section of this page.
 
